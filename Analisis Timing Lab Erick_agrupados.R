@@ -5,7 +5,8 @@ library(cowplot)
 ################# INICIALIZACIÓN DE LISTAS Y VARIABLES DE CONTROL ######################
 
 # Directorio de salida para guardar los gráficos
-output_directory <- "E:/Repositories/Analisis-Timing-LAEC/Raw/2024B/plots"
+current_directory <- getwd()
+output_directory <- file.path(current_directory, "/plots")
 
 # Inicializa una lista para almacenar los datos de todos los sujetos
 all_subject_data <- list()
@@ -35,7 +36,7 @@ box_plot_save <- FALSE
 fried_test <- FALSE
 
 # Variable para controlar si el análisis se hace por sesiones individuales o agrupadas
-analyze_sessions_separately <- FALSE
+analyze_sessions_separately <- TRUE
 
 ################ CARGAR DATOS EN MEMORIA ################
 
