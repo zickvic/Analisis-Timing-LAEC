@@ -2,6 +2,11 @@ library(YEAB)
 library(ggplot2)
 library(cowplot)
 
+################# INICIALIZACIÓN DE LISTAS Y VARIABLES DE CONTROL ######################
+
+# Directorio de salida para guardar los gráficos
+output_directory <- "E:/Repositories/Analisis-Timing-LAEC/Raw/2024B/plots"
+
 # Inicializa una lista para almacenar los datos de todos los sujetos
 all_subject_data <- list()
 
@@ -27,6 +32,12 @@ ind_plot_save <- TRUE
 gen_plot_save <- FALSE
 avg_plot_save <- FALSE
 box_plot_save <- FALSE
+fried_test <- FALSE
+
+# Variable para controlar si el análisis se hace por sesiones individuales o agrupadas
+analyze_sessions_separately <- FALSE
+
+################ CARGAR DATOS EN MEMORIA ################
 
 # Obtener la lista de archivos en el directorio de trabajo
 file_list <- list.files(pattern = "*.txt")
@@ -54,162 +65,285 @@ for (file_name in file_list) {
   }
 }
 
-# Procesa y grafica los datos
+############### PROCESAMIENTO Y GRAFICACIÓN DE DATOS #############
+
 for (initials in names(all_subject_data)) {
   
   # Se asigna un nombre de variable más manejable
   subject_data <- all_subject_data[[initials]]
   
+  # Obtener la lista de sesiones únicas
+  sessions <- unique(subject_data$Session)
+  
   # Resolución de bines
   bin <- .25
   
-  # Dividir los datos del sujeto en ensayos individuales
-  trials_list <- lapply(split(subject_data, subject_data$TipoEnsayo), function(df) {
-    # Ordenar los datos por tiempo
-    df <- df[order(df$Tiempo), ]
-    # Eliminar la columna 'TipoEnsayo'
-    df <- df[, -which(names(df) == "TipoEnsayo")]
-    return(df)
-  })
-  
-  # Reescribe los valores de tiempo por su correspondiente bin
-  binned_data <- lapply(trials_list, function(df) {
-    df$Tiempo <- get_bins(df$Tiempo, 0, 30, bin)
-    df$Tiempo <- df$Tiempo - 1
-    return(df)
-  })
-  
-  # Iterar sobre cada tipo de ensayo
-  for (trial_type in names(binned_data)) {
-    # Verificar si el tipo de ensayo ya está en combined_list
-    if (trial_type %in% names(combined_list)) {
-      # Si ya está presente, agregamos los datos de binned_data al dataframe existente en combined_list
-      combined_list[[trial_type]] <- rbind(combined_list[[trial_type]], binned_data[[trial_type]])
-    } else {
-      # Si no está presente, creamos un nuevo dataframe en combined_list con los datos de binned_data
-      combined_list[[trial_type]] <- binned_data[[trial_type]]
+  if (analyze_sessions_separately) {
+    # Iterar sobre cada sesión
+    for (session in sessions) {
+      session_data <- subject_data[subject_data$Session == session, ]
+      
+      # Dividir los datos del sujeto en ensayos individuales
+      trials_list <- lapply(split(session_data, session_data$TipoEnsayo), function(df) {
+        # Ordenar los datos por tiempo
+        df <- df[order(df$Tiempo), ]
+        # Eliminar la columna 'TipoEnsayo'
+        df <- df[, -which(names(df) == "TipoEnsayo")]
+        return(df)
+      })
+      
+      # Reescribe los valores de tiempo por su correspondiente bin
+      binned_data <- lapply(trials_list, function(df) {
+        df$Tiempo <- get_bins(df$Tiempo, 0, 30, bin)
+        df$Tiempo <- df$Tiempo - 1
+        return(df)
+      })
+      
+      # Calcular la tabla de frecuencias para cada sesión
+      ftable_trials <- lapply(binned_data, function(df) {
+        df_processed <- f_table(df$Tiempo, 0, 30, bin)
+        df_processed$freq <- unity_normalization(df_processed$freq)
+        return(df_processed)
+      })
+      
+      # Definir los parámetros iniciales para el ajuste gaussiano
+      initial_params <- list(a = 1, d = 0, t0 = 10, b = 0.8, c = 0)
+      
+      # Aplicar el ajuste gaussiano a los datos de frecuencia
+      gaus_est_trials <- lapply(ftable_trials, function(df) {
+        return(gaussian_fit(df$freq, df$bins, par = initial_params, max.iter = 10000))
+      })
+      
+      print(gaus_est_trials)
+      
+      # Agregar datos al data frame gaussian_params_data
+      for (trial_type in names(gaus_est_trials)) {
+        t0_value <- gaus_est_trials[[trial_type]][[3]]
+        spread_value <- gaus_est_trials[[trial_type]][[4]]
+        gaussian_params_data <- rbind(gaussian_params_data, data.frame(Subject = initials, 
+                                                                       Session = session, 
+                                                                       TrialType = trial_type, 
+                                                                       t0 = t0_value, 
+                                                                       Spread = spread_value))
+      }
+      
+      # Definir la función para calcular la curva ajustada
+      g_plus_lin <- function(par, tiempo) {
+        par$a * exp(-0.5 * ((tiempo - par$t0) / par$b)^2) + par$c * (tiempo - par$t0) + par$d
+      }
+      
+      # Generar puntos de tiempo para la curva ajustada
+      time_points <- seq(0, 30, 0.1)
+      
+      # Calcular la curva ajustada para cada tipo de ensayo
+      y_fit_trials <- lapply(gaus_est_trials, function(df) {
+        return(g_plus_lin(df |> as.list(), time_points))
+      })
+      
+      # Calcula el valor máximo del eje Y para ajustar las dimensiones del plot
+      ymax <- max(c(y_fit_trials$dBInterruption, y_fit_trials$Peak, y_fit_trials$Gap))
+      
+      # Para controlar si se generan los plots individuales
+      if (ind_plot_save == TRUE) {
+        
+        # Generar un nombre de archivo único para cada plot
+        plot_filename <- file.path(output_directory, paste0("plot_", initials, "_session_", session, ".png"))
+        
+        # Crear un data frame con los datos de y_fit_trials
+        plot_data <- data.frame(time_points = time_points,
+                                dBInterruption = y_fit_trials$dBInterruption,
+                                Gap = y_fit_trials$Gap,
+                                Peak = y_fit_trials$Peak)
+        
+        # Generar el gráfico individual
+        p <- ggplot(plot_data) +
+          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption", alpha = 0.3)) +
+          geom_line(aes(x = time_points, y = Gap, color = "Gap", alpha = 0.3)) +
+          geom_line(aes(x = time_points, y = Peak, color = "Peak", alpha = 0.3)) +
+          geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
+          geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
+          geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
+          labs(title = paste(initials, "- Session", session), x = "Time in trial", y = "R(t)") +
+          scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
+          scale_alpha(range = c(0.3, 1)) +
+          theme_minimal() +
+          geom_vline(xintercept = 10, linetype = 2, color = "black") +
+          theme(
+            legend.position = "topright",
+            plot.title = element_text(hjust = 0.5)
+          ) +
+          coord_cartesian(ylim = c(0, ymax))
+        
+        # Guardar el plot en un archivo .png
+        ggsave(filename = plot_filename, plot = p, width = 6, height = 4, units = "in", dpi = 200, bg = "white")
+      }
+      
+      # Para controlar si se genera el plot general
+      if (gen_plot_save == TRUE) {
+        
+        # Crear un data frame con los datos de y_fit_trials
+        plot_data <- data.frame(time_points = time_points,
+                                dBInterruption = y_fit_trials$dBInterruption,
+                                Gap = y_fit_trials$Gap,
+                                Peak = y_fit_trials$Peak)
+        
+        # Generar el gráfico individual
+        p <- ggplot(plot_data) +
+          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption", alpha = 0.3)) +
+          geom_line(aes(x = time_points, y = Gap, color = "Gap", alpha = 0.3)) +
+          geom_line(aes(x = time_points, y = Peak, color = "Peak", alpha = 0.3)) +
+          geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.2) + # Agregar puntos rojos
+          geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.2) + # Agregar puntos azules
+          geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.2) + # Agregar puntos negros      labs(title = initials, x = "Time in trial", y = "R(t)") +
+          labs(title = paste(initials, "- Session", session), x = "Time in trial", y = "R(t)") +
+          scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
+          scale_alpha(range = c(0.3, 1)) +
+          theme_minimal() +
+          geom_vline(xintercept = 10,
+                     linetype = 2,
+                     color = "black") +
+          theme(
+            legend.position ='none',
+            plot.title = element_text(hjust = 0.5)
+          )
+        
+        # Añadir el gráfico a la lista
+        plot_list[[paste(initials, session, sep = "_")]] <- p
+      }
+    }
+  } else {
+    # Agrupar todas las sesiones
+    combined_data <- do.call(rbind, lapply(sessions, function(session) {
+      subject_data[subject_data$Session == session, ]
+    }))
+    
+    # Dividir los datos del sujeto en ensayos individuales
+    trials_list <- lapply(split(combined_data, combined_data$TipoEnsayo), function(df) {
+      # Ordenar los datos por tiempo
+      df <- df[order(df$Tiempo), ]
+      # Eliminar la columna 'TipoEnsayo'
+      df <- df[, -which(names(df) == "TipoEnsayo")]
+      return(df)
+    })
+    
+    # Reescribe los valores de tiempo por su correspondiente bin
+    binned_data <- lapply(trials_list, function(df) {
+      df$Tiempo <- get_bins(df$Tiempo, 0, 30, bin)
+      df$Tiempo <- df$Tiempo - 1
+      return(df)
+    })
+    
+    # Calcular la tabla de frecuencias para los datos combinados
+    ftable_trials <- lapply(binned_data, function(df) {
+      df_processed <- f_table(df$Tiempo, 0, 30, bin)
+      df_processed$freq <- unity_normalization(df_processed$freq)
+      return(df_processed)
+    })
+    
+    # Definir los parámetros iniciales para el ajuste gaussiano
+    initial_params <- list(a = 1, d = 0, t0 = 10, b = 0.8, c = 0)
+    
+    # Aplicar el ajuste gaussiano a los datos de frecuencia
+    gaus_est_trials <- lapply(ftable_trials, function(df) {
+      return(gaussian_fit(df$freq, df$bins, par = initial_params, max.iter = 10000))
+    })
+    
+    # Agregar datos al data frame gaussian_params_data
+    for (trial_type in names(gaus_est_trials)) {
+      t0_value <- gaus_est_trials[[trial_type]][[3]]
+      spread_value <- gaus_est_trials[[trial_type]][[4]]
+      gaussian_params_data <- rbind(gaussian_params_data, data.frame(Subject = initials, 
+                                                                     Session = "Combined", 
+                                                                     TrialType = trial_type, 
+                                                                     t0 = t0_value, 
+                                                                     Spread = spread_value))
+    }
+    
+    # Definir la función para calcular la curva ajustada
+    g_plus_lin <- function(par, tiempo) {
+      par$a * exp(-0.5 * ((tiempo - par$t0) / par$b)^2) + par$c * (tiempo - par$t0) + par$d
+    }
+    
+    # Generar puntos de tiempo para la curva ajustada
+    time_points <- seq(0, 30, 0.1)
+    
+    # Calcular la curva ajustada para cada tipo de ensayo
+    y_fit_trials <- lapply(gaus_est_trials, function(df) {
+      return(g_plus_lin(df |> as.list(), time_points))
+    })
+    
+    # Calcula el valor máximo del eje Y para ajustar las dimensiones del plot
+    ymax <- max(c(y_fit_trials$dBInterruption, y_fit_trials$Peak, y_fit_trials$Gap))
+    
+    # Para controlar si se generan los plots individuales
+    if (ind_plot_save == TRUE) {
+      
+      # Generar un nombre de archivo único para cada plot
+      plot_filename <- file.path(output_directory, paste0("plot_", initials, "_all_sessions.png"))
+      
+      # Crear un data frame con los datos de y_fit_trials
+      plot_data <- data.frame(time_points = time_points,
+                              dBInterruption = y_fit_trials$dBInterruption,
+                              Gap = y_fit_trials$Gap,
+                              Peak = y_fit_trials$Peak)
+      
+      # Generar el gráfico individual
+      p <- ggplot(plot_data) +
+        geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
+        geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
+        geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
+        geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
+        geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
+        geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
+        labs(title = paste(initials, "- Combined Sessions"), x = "Time in trial", y = "R(t)") +
+        scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
+        theme_minimal() +
+        geom_vline(xintercept = 10, linetype = 2, color = "black") +
+        theme(
+          legend.position = "topright",
+          plot.title = element_text(hjust = 0.5)
+        ) +
+        coord_cartesian(ylim = c(0, ymax))
+      
+      # Guardar el plot en un archivo .png
+      ggsave(filename = plot_filename, plot = p, width = 6, height = 4, units = "in", dpi = 200, bg = "white")
+    }
+    
+    # Para controlar si se genera el plot general
+    if (gen_plot_save == TRUE) {
+      
+      # Crear un data frame con los datos de y_fit_trials
+      plot_data <- data.frame(time_points = time_points,
+                              dBInterruption = y_fit_trials$dBInterruption,
+                              Gap = y_fit_trials$Gap,
+                              Peak = y_fit_trials$Peak)
+      
+      # Generar el gráfico individual
+      p <- ggplot(plot_data) +
+        geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
+        geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
+        geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
+        geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.2) + # Agregar puntos rojos
+        geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.2) + # Agregar puntos azules
+        geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.2) + # Agregar puntos negros      labs(title = initials, x = "Time in trial", y = "R(t)") +
+        labs(title = paste(initials, "- Combined Sessions"), x = "Time in trial", y = "R(t)") +
+        scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
+        theme_minimal() +
+        geom_vline(xintercept = 10,
+                   linetype = 2,
+                   color = "black") +
+        theme(
+          legend.position ='none',
+          plot.title = element_text(hjust = 0.5)
+        )
+      
+      # Añadir el gráfico a la lista
+      plot_list[[paste(initials, "combined", sep = "_")]] <- p
     }
   }
-  
-  # Calcular la tabla de frecuencias
-  ftable_trials <- lapply(binned_data, function(df) {
-    df_processed <- f_table(df$Tiempo, 0, 30, bin)
-    #df_processed$freq <- df_processed$freq/length(df_processed$freq)
-    df_processed$freq <- unity_normalization(df_processed$freq)
-    return(df_processed)
-  })
-  
-  # Definir los parámetros iniciales para el ajuste gaussiano
-  initial_params <- list(a = 1, d = 0, t0 = 10, b = 0.8, c = 0)
-  
-  # Aplicar el ajuste gaussiano a los datos de frecuencia
-  gaus_est_trials <- lapply(ftable_trials, function(df) {
-    return(gaussian_fit(df$freq, df$bins, par = initial_params, max.iter = 10000))
-  })
-  
-  # Obtener los valores para esta iteración
-  peak_value <- gaus_est_trials$Peak[[3]]
-  gap_value <- gaus_est_trials$Gap[[3]]
-  db_value <- gaus_est_trials$dBInterruption[[3]]
-  
-  # Agregar una nueva fila al data frame
-  boxplot_data <- rbind(boxplot_data, data.frame(condition = 'Pico', t0 = peak_value, subject = initials))
-  boxplot_data <- rbind(boxplot_data, data.frame(condition = 'Interrupción de señal', t0 = gap_value, subject = initials))
-  boxplot_data <- rbind(boxplot_data, data.frame(condition = 'Distractor auditivo', t0 = db_value, subject = initials))
-  
-  # Agregar datos al data frame gaussian_params_data
-  for (trial_type in names(gaus_est_trials)) {
-    t0_value <- gaus_est_trials[[trial_type]]$t0
-    spread_value <- gaus_est_trials[[trial_type]]$b
-    gaussian_params_data <- rbind(gaussian_params_data, data.frame(Subject = initials, 
-                                                                   Session = session_num, 
-                                                                   TrialType = trial_type, 
-                                                                   t0 = t0_value, 
-                                                                   Spread = spread_value))
-  }
-  
-  # Definir la función para calcular la curva ajustada
-  g_plus_lin <- function(par, tiempo) {
-    par$a * exp(-0.5 * ((tiempo - par$t0) / par$b)^2) + par$c * (tiempo - par$t0) + par$d
-  }
-  
-  # Generar puntos de tiempo para la curva ajustada
-  time_points <- seq(0, 30, 0.1)
-  
-  # Calcular la curva ajustada para cada tipo de ensayo
-  y_fit_trials <- lapply(gaus_est_trials, function(df) {
-    return(g_plus_lin(df |> as.list(), time_points))
-  })
-  
-  # Calcula el valor máximo del eje Y para ajustar las dimensiones del plot
-  ymax <- max(c(y_fit_trials$dBInterruption, y_fit_trials$Peak, y_fit_trials$Gap))
-  
-  # Para controlar si se generan los plots individuales
-  if (ind_plot_save == TRUE) {
-    
-    # Generar un nombre de archivo único para cada plot
-    plot_filename <- paste0("plot_", initials, ".png")
-    
-    # Crear un data frame con los datos de y_fit_trials
-    plot_data <- data.frame(time_points = time_points,
-                            dBInterruption = y_fit_trials$dBInterruption,
-                            Gap = y_fit_trials$Gap,
-                            Peak = y_fit_trials$Peak)
-    
-    # Generar el gráfico individual
-    p <- ggplot(plot_data) +
-      geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
-      geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
-      geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
-      geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
-      geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
-      geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
-      labs(title = initials, x = "Time in trial", y = "R(t)") +
-      scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
-      theme_minimal() +
-      geom_vline(xintercept = 10, linetype = 2, color = "black") +
-      theme(
-        legend.position = "topright",
-        plot.title = element_text(hjust = 0.5)
-      ) +
-      coord_cartesian(ylim = c(0, ymax))
-    
-    # Guardar el plot en un archivo .png
-    ggsave(filename = plot_filename, plot = p, width = 6, height = 4, units = "in", dpi = 200, bg = "white")
-  }
-  
-  # Para controlar si se genera el plot general
-  if (gen_plot_save == TRUE) {
-    
-    # Crear un data frame con los datos de y_fit_trials
-    plot_data <- data.frame(time_points = time_points,
-                            dBInterruption = y_fit_trials$dBInterruption,
-                            Gap = y_fit_trials$Gap,
-                            Peak = y_fit_trials$Peak)
-    
-    # Generar el gráfico individual
-    p <- ggplot(plot_data) +
-      geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
-      geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
-      geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
-      geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.2) + # Agregar puntos rojos
-      geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.2) + # Agregar puntos azules
-      geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.2) + # Agregar puntos negros      labs(title = initials, x = "Time in trial", y = "R(t)") +
-      labs(title = initials, x = "Time in trial", y = "R(t)") +
-      scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
-      theme_minimal() +
-      geom_vline(xintercept = 10,
-                 linetype = 2,
-                 color = "black") +
-      theme(
-        legend.position ='none',
-        plot.title = element_text(hjust = 0.5)
-      )
-    
-    # Añadir el gráfico a la lista
-    plot_list[[initials]] <- p
-  }
 }
+
+############## GRAFICACIÓN DE DATOS ###############
 
 # Guarda el plot general
 if (gen_plot_save == TRUE) {
@@ -241,8 +375,10 @@ if (gen_plot_save == TRUE) {
   # Agregar la leyenda al gráfico general
   grid_plot <- plot_grid(legend_plot, grid_plot, nrow = 2, rel_heights = c(0.1, 1))
   
+  plotg_filename <- file.path(output_directory, "plot_general.png")
+  
   # Guardar el plot en un archivo .png
-  ggsave("plot_general.png", grid_plot, width = 6, height = 4, units = "in", dpi = 200, bg = "white")
+  ggsave(plotg_filename, grid_plot, width = 6, height = 4, units = "in", dpi = 200, bg = "white")
   
   # Imprimir la cuadrícula de gráficos
   print(grid_plot)
@@ -295,11 +431,12 @@ if (avg_plot_save == TRUE){
     ) +
     coord_cartesian(ylim = c(0, 1))  
   )
+  
+  plotav_filename <- file.path(output_directory, "plot_average.png")
+  
 
-  ggsave("plot_average.png", plot = last_plot(), width = 6, height = 4, units = "in", dpi = 200, bg = "white")
+  ggsave(plotav_filename, plot = last_plot(), width = 6, height = 4, units = "in", dpi = 200, bg = "white")
 }
-
-#######################################################################################
 
 # Genera boxplot
 if (box_plot_save == TRUE){
@@ -326,12 +463,17 @@ if (box_plot_save == TRUE){
          axis.line = element_line(color = "black"))
   )
   
-  ggsave("boxplot_peaks.png", plot = last_plot(), 
+  plotbox_filename <- file.path(output_directory, "boxplot_t0s.pngs")
+  
+  ggsave(plotbox_filename, plot = last_plot(), 
          width = 6, height = 4, units = "in", dpi = 200, bg = "white")
 }
 
-#boxplot_data_fried = boxplot_data
-#boxplot_data_fried$condition = as.factor(boxplot_data_fried$condition)
+# Aplica prueba de friedman
+if (fried_test == TRUE){
+boxplot_data_fried = boxplot_data
+boxplot_data_fried$condition = as.factor(boxplot_data_fried$condition)
 
-#fried <- friedman.test(t0 ~ condition | subject, data = boxplot_data_fried)
-#print(fried)
+fried <- friedman.test(t0 ~ condition | subject, data = boxplot_data_fried)
+print(fried)
+}
