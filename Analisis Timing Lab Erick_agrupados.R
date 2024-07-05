@@ -4,6 +4,8 @@ library(cowplot)
 
 ################# INICIALIZACIÓN DE LISTAS Y VARIABLES DE CONTROL ######################
 
+setwd("E:/Repositories/Analisis-Timing-LAEC/Raw/2024B")
+
 # Directorio de salida para guardar los gráficos
 current_directory <- getwd()
 output_directory <- file.path(current_directory, "/plots")
@@ -37,6 +39,9 @@ fried_test <- FALSE
 
 # Variable para controlar si el análisis se hace por sesiones individuales o agrupadas
 analyze_sessions_separately <- TRUE
+
+# Definir los parámetros iniciales para el ajuste gaussiano
+initial_params <- list(a = .8, d = -1, t0 = 11, b = 1.2, c = 0)
 
 ################ CARGAR DATOS EN MEMORIA ################
 
@@ -107,15 +112,12 @@ for (initials in names(all_subject_data)) {
         return(df_processed)
       })
       
-      # Definir los parámetros iniciales para el ajuste gaussiano
-      initial_params <- list(a = 1, d = 0, t0 = 10, b = 0.8, c = 0)
-      
       # Aplicar el ajuste gaussiano a los datos de frecuencia
       gaus_est_trials <- lapply(ftable_trials, function(df) {
         return(gaussian_fit(df$freq, df$bins, par = initial_params, max.iter = 10000))
       })
       
-      print(gaus_est_trials)
+      #print(gaus_est_trials)
       
       # Agregar datos al data frame gaussian_params_data
       for (trial_type in names(gaus_est_trials)) {
@@ -142,7 +144,7 @@ for (initials in names(all_subject_data)) {
       })
       
       # Calcula el valor máximo del eje Y para ajustar las dimensiones del plot
-      ymax <- max(c(y_fit_trials$dBInterruption, y_fit_trials$Peak, y_fit_trials$Gap))
+      ymax <- 1
       
       # Para controlar si se generan los plots individuales
       if (ind_plot_save == TRUE) {
@@ -158,19 +160,21 @@ for (initials in names(all_subject_data)) {
         
         # Generar el gráfico individual
         p <- ggplot(plot_data) +
-          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption", alpha = 0.3)) +
-          geom_line(aes(x = time_points, y = Gap, color = "Gap", alpha = 0.3)) +
-          geom_line(aes(x = time_points, y = Peak, color = "Peak", alpha = 0.3)) +
+          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
+          geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
+          geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
           geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
           geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
           geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
           labs(title = paste(initials, "- Session", session), x = "Time in trial", y = "R(t)") +
-          scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
-          scale_alpha(range = c(0.3, 1)) +
+          scale_color_manual(name = "Tipo de ensayo", values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black"),
+                             labels = c("dBInterruption" = "Audio", "Gap" = "Gap", "Peak" = "Pico")) +
           theme_minimal() +
           geom_vline(xintercept = 10, linetype = 2, color = "black") +
           theme(
-            legend.position = "topright",
+            legend.position = "top",
+            legend.title = element_text(size = 10),
+            legend.text = element_text(size = 8),
             plot.title = element_text(hjust = 0.5)
           ) +
           coord_cartesian(ylim = c(0, ymax))
@@ -197,16 +201,17 @@ for (initials in names(all_subject_data)) {
           geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.2) + # Agregar puntos azules
           geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.2) + # Agregar puntos negros      labs(title = initials, x = "Time in trial", y = "R(t)") +
           labs(title = paste(initials, "- Session", session), x = "Time in trial", y = "R(t)") +
-          scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
-          scale_alpha(range = c(0.3, 1)) +
+          scale_color_manual(name = "Tipo de ensayo", values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black"),
+                             labels = c("dBInterruption" = "Audio", "Gap" = "Gap", "Peak" = "Pico")) +
           theme_minimal() +
-          geom_vline(xintercept = 10,
-                     linetype = 2,
-                     color = "black") +
+          geom_vline(xintercept = 10, linetype = 2, color = "black") +
           theme(
-            legend.position ='none',
+            legend.position = "top",
+            legend.title = element_text(size = 10),
+            legend.text = element_text(size = 8),
             plot.title = element_text(hjust = 0.5)
-          )
+          ) +
+          coord_cartesian(ylim = c(0, ymax))
         
         # Añadir el gráfico a la lista
         plot_list[[paste(initials, session, sep = "_")]] <- p
@@ -241,9 +246,6 @@ for (initials in names(all_subject_data)) {
       return(df_processed)
     })
     
-    # Definir los parámetros iniciales para el ajuste gaussiano
-    initial_params <- list(a = 1, d = 0, t0 = 10, b = 0.8, c = 0)
-    
     # Aplicar el ajuste gaussiano a los datos de frecuencia
     gaus_est_trials <- lapply(ftable_trials, function(df) {
       return(gaussian_fit(df$freq, df$bins, par = initial_params, max.iter = 10000))
@@ -274,7 +276,7 @@ for (initials in names(all_subject_data)) {
     })
     
     # Calcula el valor máximo del eje Y para ajustar las dimensiones del plot
-    ymax <- max(c(y_fit_trials$dBInterruption, y_fit_trials$Peak, y_fit_trials$Gap))
+    ymax <- 1
     
     # Para controlar si se generan los plots individuales
     if (ind_plot_save == TRUE) {
@@ -296,12 +298,15 @@ for (initials in names(all_subject_data)) {
         geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
         geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
         geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
-        labs(title = paste(initials, "- Combined Sessions"), x = "Time in trial", y = "R(t)") +
-        scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
+        labs(title = paste(initials, "- Promedio 3 Sesiones"), x = "Time in trial", y = "R(t)") +
+        scale_color_manual(name = "Tipo de ensayo", values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black"),
+                           labels = c("dBInterruption" = "Audio", "Gap" = "Gap", "Peak" = "Pico")) +
         theme_minimal() +
         geom_vline(xintercept = 10, linetype = 2, color = "black") +
         theme(
-          legend.position = "topright",
+          legend.position = "top",
+          legend.title = element_text(size = 10),
+          legend.text = element_text(size = 8),
           plot.title = element_text(hjust = 0.5)
         ) +
         coord_cartesian(ylim = c(0, ymax))
@@ -327,7 +332,7 @@ for (initials in names(all_subject_data)) {
         geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.2) + # Agregar puntos rojos
         geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.2) + # Agregar puntos azules
         geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.2) + # Agregar puntos negros      labs(title = initials, x = "Time in trial", y = "R(t)") +
-        labs(title = paste(initials, "- Combined Sessions"), x = "Time in trial", y = "R(t)") +
+        labs(title = paste(initials, "- Promedio 3 Sesiones"), x = "Time in trial", y = "R(t)") +
         scale_color_manual(values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black")) +
         theme_minimal() +
         geom_vline(xintercept = 10,
