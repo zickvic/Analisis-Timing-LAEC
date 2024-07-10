@@ -38,10 +38,10 @@ box_plot_save <- FALSE
 fried_test <- FALSE
 
 # Variable para controlar si el análisis se hace por sesiones individuales o agrupadas
-analyze_sessions_separately <- TRUE
+analyze_sessions_separately <- FALSE
 
 # Definir los parámetros iniciales para el ajuste gaussiano
-initial_params <- list(a = .8, d = -1, t0 = 11, b = 1.2, c = 0)
+initial_params <- list(a = .65, d = 0, t0 = 7.5, b = 1.2, c = 0)
 
 ################ CARGAR DATOS EN MEMORIA ################
 
@@ -158,17 +158,27 @@ for (initials in names(all_subject_data)) {
                                 Gap = y_fit_trials$Gap,
                                 Peak = y_fit_trials$Peak)
         
-        # Generar el gráfico individual
+        # Extraer los valores t0 para cada tipo de ensayo para el sujeto y sesión actuales
+        current_params <- gaussian_params_data[gaussian_params_data$Subject == initials & gaussian_params_data$Session == session,]
+        
+        # Crear las etiquetas con los valores t0
+        labels <- c(
+          paste("Audio t0 =", round(current_params[current_params$TrialType == "dBInterruption", "t0"], 1), "s"),
+          paste("Gap t0 =", round(current_params[current_params$TrialType == "Gap", "t0"], 1), "s"),
+          paste("Pico t0 =", round(current_params[current_params$TrialType == "Peak", "t0"], 1), "s")
+        )
+        
+        # Generar el gráfico individual con las nuevas etiquetas
         p <- ggplot(plot_data) +
-          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
-          geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
-          geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
+          geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption"), alpha = 0.9, size = 0.5) +
+          geom_line(aes(x = time_points, y = Gap, color = "Gap"), alpha = 0.9, size = 0.5) +
+          geom_line(aes(x = time_points, y = Peak, color = "Peak"), alpha = 0.9, size = 0.5) +
           geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
           geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
           geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
           labs(title = paste(initials, "- Session", session), x = "Time in trial", y = "R(t)") +
           scale_color_manual(name = "Tipo de ensayo", values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black"),
-                             labels = c("dBInterruption" = "Audio", "Gap" = "Gap", "Peak" = "Pico")) +
+                             labels = setNames(labels, c("dBInterruption", "Gap", "Peak"))) +
           theme_minimal() +
           geom_vline(xintercept = 10, linetype = 2, color = "black") +
           theme(
@@ -289,18 +299,24 @@ for (initials in names(all_subject_data)) {
                               dBInterruption = y_fit_trials$dBInterruption,
                               Gap = y_fit_trials$Gap,
                               Peak = y_fit_trials$Peak)
+      # Crear las etiquetas con los valores t0
+      labels <- c(
+        paste("Audio t0 =", round(gaussian_params_data[gaussian_params_data$TrialType == "dBInterruption", "t0"], 1), "s"),
+        paste("Gap t0 =", round(gaussian_params_data[gaussian_params_data$TrialType == "Gap", "t0"], 1), "s"),
+        paste("Pico t0 =", round(gaussian_params_data[gaussian_params_data$TrialType == "Peak", "t0"], 1), "s")
+      )
       
-      # Generar el gráfico individual
+      # Generar el gráfico individual con las nuevas etiquetas
       p <- ggplot(plot_data) +
-        geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption")) +
-        geom_line(aes(x = time_points, y = Gap, color = "Gap")) +
-        geom_line(aes(x = time_points, y = Peak, color = "Peak")) +
+        geom_line(aes(x = time_points, y = dBInterruption, color = "dBInterruption"), alpha = 0.9, size = 0.5) +
+        geom_line(aes(x = time_points, y = Gap, color = "Gap"), alpha = 0.9, size = 0.5) +
+        geom_line(aes(x = time_points, y = Peak, color = "Peak"), alpha = 0.9, size = 0.5) +
         geom_point(data = ftable_trials$dBInterruption, aes(x = bins, y = freq), color = "red", size = 0.8) + # Agregar puntos rojos
         geom_point(data = ftable_trials$Gap, aes(x = bins, y = freq), color = "blue", size = 0.8) + # Agregar puntos azules
         geom_point(data = ftable_trials$Peak, aes(x = bins, y = freq), color = "black", size = 0.8) + # Agregar puntos negros
-        labs(title = paste(initials, "- Promedio 3 Sesiones"), x = "Time in trial", y = "R(t)") +
+        labs(title = paste(initials, "Promedio 3 Sesiones"), x = "Time in trial", y = "R(t)") +
         scale_color_manual(name = "Tipo de ensayo", values = c("dBInterruption" = "red", "Gap" = "blue", "Peak" = "black"),
-                           labels = c("dBInterruption" = "Audio", "Gap" = "Gap", "Peak" = "Pico")) +
+                           labels = setNames(labels, c("dBInterruption", "Gap", "Peak"))) +
         theme_minimal() +
         geom_vline(xintercept = 10, linetype = 2, color = "black") +
         theme(
